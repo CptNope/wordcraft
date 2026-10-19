@@ -2208,7 +2208,9 @@ impl WordApp {
         if self.session.view.focus_mode && self.dialog.is_none() && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
             let _ = self.run("view.focus", json!({"value": false}));
         }
-        if self.ui.backstage {
+        if cfg!(target_arch = "wasm32") && ctx.content_rect().width() < 720.0 {
+            self.mobile_frame(ui);
+        } else if self.ui.backstage {
             backstage::show(self, ui);
         } else if !self.has_document() {
             // No document open (#1129): the ribbon greyed out but for Help, and no page.
@@ -2253,6 +2255,70 @@ impl WordApp {
         self.frame_ms = now_ms() - t0;
         // Typing and formatting land here, after `logic` has reported.
         self.report_dirty();
+    }
+
+    /// Browser-only phone workspace: leave the page visible instead of rendering desktop
+    /// title/ribbon/status bars and multiple 250pt side panes in a 360pt viewport.
+    /// Buttons dispatch the same commands as desktop; no document editing logic forks.
+    fn mobile_frame(&mut self, ui: &mut egui::Ui) {
+        if self.ui.backstage {
+            backstage::show_phone(self, ui);
+            return;
+        }
+        let t = theme::Tokens::get(ui.ctx());
+        let ribbon_id = egui::Id::new("wordcraft_phone_ribbon");
+        let mut show_ribbon = ui.ctx().data(|d| d.get_temp::<bool>(ribbon_id)).unwrap_or(false);
+        egui::Panel::top("wordcraft_phone_actions")
+            .exact_size(48.0)
+            .frame(egui::Frame::NONE.fill(t.title_bar).inner_margin(egui::Margin::symmetric(7, 5)))
+            .show(ui, |ui| {
+                egui::ScrollArea::horizontal().id_salt("wordcraft-phone-actions")
+                    .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            if ui.button(tl!("File")).clicked() {
+                                self.ui.backstage = true;
+                                self.ui.backstage_page = "home".into();
+                            }
+                            if ui.selectable_label(show_ribbon, tl!("Home")).clicked() {
+                                self.ui.tab = "Home".into();
+                                show_ribbon = !show_ribbon;
+                            }
+                            if ui.button(tl!("Open")).clicked() {
+                                let _ = self.run("ui.openFileDialog", json!({}));
+                            }
+                            if ui.add_enabled(self.has_document(), egui::Button::new(tl!("Save"))).clicked() {
+                                let _ = self.run("file.save", json!({}));
+                            }
+                            if ui.add_enabled(self.has_document(), egui::Button::new(tl!("Undo"))).clicked() {
+                                let _ = self.run("edit.undo", json!({}));
+                            }
+                            if ui.add_enabled(self.has_document(), egui::Button::new(tl!("Redo"))).clicked() {
+                                let _ = self.run("edit.redo", json!({}));
+                            }
+                            if ui.selectable_label(show_ribbon, tl!("Tools")).clicked() {
+                                show_ribbon = !show_ribbon;
+                            }
+                        });
+                    });
+            });
+        ui.ctx().data_mut(|d| d.insert_temp(ribbon_id, show_ribbon));
+        if show_ribbon {
+            ribbon::show(self, ui);
+        }
+        egui::CentralPanel::default().frame(egui::Frame::NONE.fill(t.canvas)).show(ui, |ui| {
+            if self.has_document() {
+                canvas::show(self, ui);
+            } else {
+                ui.vertical_centered(|ui| {
+                    ui.add_space(40.0);
+                    ui.heading("WordCraft");
+                    if ui.button(tl!("New")).clicked() {
+                        let _ = self.run("file.new", json!({"template": "blank"}));
+                    }
+                });
+            }
+        });
     }
 
     /// Carry View › Full Screen (`view.fullScreen`, F11) to the window, and follow the window

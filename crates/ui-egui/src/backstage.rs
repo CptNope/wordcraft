@@ -168,6 +168,94 @@ pub fn show(app: &mut WordApp, ui: &mut Ui) {
         });
 }
 
+/// Single-column Backstage for phones. The desktop's fixed-width navigation pane
+/// would leave less than half the viewport for New/Open/Save and template cards.
+pub fn show_phone(app: &mut WordApp, ui: &mut Ui) {
+    let t = Tokens::get(ui.ctx());
+    let has_document = app.has_document();
+    if !has_document && !works_without_document(&app.ui.backstage_page) {
+        app.ui.backstage_page = "home".into();
+    }
+    egui::Panel::top("wordcraft_phone_files")
+        .exact_size(52.0)
+        .frame(egui::Frame::NONE.fill(APP_COLOR).inner_margin(egui::Margin::same(8)))
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                if ui.button("‹ Back").clicked() {
+                    app.ui.backstage = false;
+                    app.canvas.want_focus = true;
+                }
+                let current = app.ui.backstage_page.clone();
+                let label = PAGES.iter().find(|(id, _, _)| *id == current).map_or(tl!("File"), |(_, text, _)| tl!(text));
+                egui::ComboBox::from_id_salt("wordcraft-phone-file-page")
+                    .selected_text(label)
+                    .width((ui.available_width() - 110.0).max(120.0))
+                    .show_ui(ui, |ui| {
+                        for (id, label, _) in PAGES {
+                            if !has_document && !works_without_document(id) { continue; }
+                            if ui.selectable_label(current == id, tl!(label)).clicked() {
+                                app.ui.backstage_page = id.into();
+                            }
+                        }
+                    });
+            });
+        });
+    egui::CentralPanel::default()
+        .frame(egui::Frame::NONE.fill(t.ribbon).inner_margin(egui::Margin::symmetric(12, 14)))
+        .show(ui, |ui| {
+            let width = ui.available_width().max(200.0);
+            egui::ScrollArea::vertical().id_salt("wordcraft-phone-file-scroll")
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    ui.set_max_width(width);
+                    match app.ui.backstage_page.as_str() {
+                        "home" => {
+                            heading(ui, "Home");
+                            if ui.button(tl!("Blank document")).clicked() {
+                                let _ = app.run("file.new", json!({"template": "blank"}));
+                                app.ui.backstage = false;
+                                app.canvas.want_focus = true;
+                            }
+                            if ui.button(tl!("Open")).clicked() {
+                                let _ = app.run("ui.openFileDialog", json!({}));
+                            }
+                            ui.add_space(16.0);
+                            open_list(app, ui);
+                        }
+                        "new" => {
+                            heading(ui, "New");
+                            for (label, template) in TEMPLATES {
+                                if ui.add_sized([width.min(400.0), 40.0], egui::Button::new(crate::i18n::tc("template", label))).clicked() {
+                                    let _ = app.run("file.new", json!({"template": template}));
+                                    app.ui.backstage = false;
+                                    app.canvas.want_focus = true;
+                                }
+                                ui.add_space(6.0);
+                            }
+                        }
+                        "open" => open_page(app, ui),
+                        "save" => {
+                            if ui.button(tl!("Save")).clicked() {
+                                let result = app.run("file.save", json!({}));
+                                if result.is_ok() { app.ui.backstage = false; }
+                            }
+                        }
+                        "saveAs" => save_as_page(app, ui),
+                        "print" | "export" => export_page(app, ui),
+                        "info" => info_page(app, ui),
+                        "recover" => recovery_page(app, ui),
+                        "options" => crate::options::page(app, ui),
+                        "close" => {
+                            if ui.button(tl!("Close")).clicked() {
+                                let _ = app.run("file.close", json!({}));
+                            }
+                        }
+                        _ => home_page(app, ui),
+                    }
+                });
+        });
+}
+
 /// Recovery is a separate copy. Leaving this page never discards it.
 fn recovery_page(app: &mut WordApp, ui: &mut Ui) {
     ui.visuals_mut().override_text_color = Some(egui::Color32::WHITE);
